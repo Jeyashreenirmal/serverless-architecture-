@@ -1,0 +1,28 @@
+import boto3
+from botocore.exceptions import ClientError
+
+def lambda_handler(event, context):
+    s3 = boto3.client('s3')
+    
+    unencrypted_buckets = []
+    
+    buckets = s3.list_buckets().get('Buckets', [])
+
+    for bucket in buckets:
+        bucket_name = bucket['Name']
+        try:
+            s3.get_bucket_encryption(Bucket=bucket_name)
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ServerSideEncryptionConfigurationNotFoundError':
+                unencrypted_buckets.append(bucket_name)
+
+    if unencrypted_buckets:
+        print("🚨 Unencrypted S3 Buckets Found:")
+        for b in unencrypted_buckets:
+            print(f"- {b}")
+    else:
+        print("✅ All S3 buckets are encrypted")
+
+    return {
+        "unencrypted_buckets": unencrypted_buckets
+    }

@@ -1,0 +1,100 @@
+import boto3
+from datetime import datetime, timedelta, timezone
+
+# ========================
+# CONFIGURATION
+# ========================
+
+# Replace with your EBS volume IDs
+VOLUME_IDS = [
+    "vol-0f5cd6d485f88f187"
+]
+
+# Retention period (days)
+RETENTION_DAYS = 30
+
+# Tag used to identify snapshots created by this Lambda
+SNAPSHOT_TAG_KEY = "CreatedBy"
+SNAPSHOT_TAG_VALUE = "LambdaEBSBackup"
+
+
+# ========================
+# LAMBDA HANDLER
+# ========================
+
+def lambda_handler(event, context):
+
+    ec2 = boto3.client("ec2")
+
+    created_snapshots = []
+    deleted_snapshots = []
+
+    # ------------------------
+    # 1. CREATE SNAPSHOTS
+    # ------------------------
+    for volume_id in VOLUME_IDS:
+        try:
+            response = ec2.create_snapshot(
+                VolumeId=volume_id,
+                Description=f"Lambda backup of {volume_id} at {datetime.now(timezone.utc)}",
+                TagSpecifications=[
+                    {
+                        "ResourceType": "snapshot",
+                        "Tags": [
+                            {"Key": SNAPSHOT_TAG_KEY, "Value": SNAPSHOT_TAG_VALUE},
+                            {"Key": "VolumeId", "Value": volume_id}
+                        ]
+                    }
+                ]
+            )
+
+            snapshot_id = response["SnapshotId"]
+            created_snapshots.append(snapshot_id)
+            print(f"Created snapshot: {snapshot_id}")
+
+        except Exception as e:
+            print(f"Failed to create snapshot for {volume_id}: {str(e)}")
+
+    # ------------------------
+    # 2. DELETE OLD SNAPSHOTS
+    # ------------------------
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
+
+    try:
+        snapshots = ec2.describe_snapshots(
+            OwnerIds=["self"],
+            Filters=[
+                {
+                    "Name": f"tag:{SNAPSHOT_TAG_KEY}",
+                    "Values": [SNAPSHOT_TAG_VALUE]
+                }
+            ]
+        )["Snapshots"]
+
+        for snapshot in snapshots:
+            snapshot_id = snapshot["SnapshotId"]
+            start_time = snapshot["StartTime"]
+
+            if start_time < cutoff_date:
+                try:
+                    ec2.delete_snapshot(SnapshotId=snapshot_id)
+                    deleted_snapshots.append(snapshot_id)
+                    print(f"Deleted snapshot: {snapshot_id}")
+
+                except Exception as e:
+                    print(f"Could not delete snapshot {snapshot_id}: {str(e)}")
+
+    except Exception as e:
+        print(f"Error while listing snapshots: {str(e)}")
+
+    # ------------------------
+    # 3. LOG OUTPUT
+    # ------------------------
+    print("Snapshots created:", created_snapshots)
+    print("Snapshots deleted:", deleted_snapshots)
+
+    return {
+        "status": "SUCCESS",
+        "snapshots_created": created_snapshots,
+        "snapshots_deleted": deleted_snapshots
+    }

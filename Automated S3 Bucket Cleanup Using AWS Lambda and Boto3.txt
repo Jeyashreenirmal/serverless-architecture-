@@ -1,0 +1,43 @@
+import boto3
+from datetime import datetime, timedelta, timezone
+
+# S3 client
+s3 = boto3.client('s3')
+
+# Your bucket name
+BUCKET_NAME = 'jsree-bucket'
+DAYS_OLD = 30
+
+# Optional: simulate a file being older for testing
+SIMULATED_OLD_FILES = {
+    "Test 2.docx": 40  # simulate test2 as 40 days old
+}
+
+def lambda_handler(event, context):
+    deleted_files = []
+
+    # Calculate cutoff date
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=DAYS_OLD)
+
+    # List objects in the bucket
+    response = s3.list_objects_v2(Bucket=BUCKET_NAME)
+    if 'Contents' not in response:
+        return {"message": "Bucket is empty"}
+
+    for obj in response['Contents']:
+        key = obj['Key']
+
+        # Simulate old file for testing
+        simulated_days = SIMULATED_OLD_FILES.get(key)
+        if simulated_days:
+            file_date = datetime.now(timezone.utc) - timedelta(days=simulated_days)
+        else:
+            file_date = obj['LastModified']
+
+        # Delete if older than 30 days
+        if file_date < cutoff_date:
+            s3.delete_object(Bucket=BUCKET_NAME, Key=key)
+            deleted_files.append(key)
+            print(f"Deleted: {key}")
+
+    return {"deleted_files": deleted_files}
